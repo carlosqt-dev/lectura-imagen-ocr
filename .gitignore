@@ -1,0 +1,21 @@
+# Entorno virtual (ya se autoexcluye con .venv/.gitignore, esto es explícito)
+.venv/
+venv/
+
+# Bytecode de Python
+__pycache__/
+*.pyc
+
+# Build del ejecutable portátil
+build/
+dist/
+*.spec
+
+# Capturas tomadas por la app (datos del operario, no del repo)
+data/processed/*
+!data/processed/.gitkeep
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db

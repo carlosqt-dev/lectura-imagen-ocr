@@ -4,27 +4,48 @@
 
 ```text
 lector_tabla/
-├── main.py                  # inicia la ventana
-├── models/result.py         # resultado y avisos
+├── main.py                        # inicia la ventana pywebview
+├── models/result.py               # resultado y avisos
 ├── processing/image_processor.py  # rejilla, OCR, selección y comparación
-├── ui/window.py             # dos selectores de archivos
-├── scripts/test_processing.py # ejecución sin interfaz
-├── data/processed/          # reservado para una versión futura
-├── build_portable.ps1       # construye una carpeta portátil en Windows
+├── processing/screen_capture.py   # oculta la app y captura el monitor externo
+├── ui/api.py                      # puente entre el HTML y Python (js_api)
+├── ui/web/                        # interfaz (index.html, style.css, app.js)
+├── scripts/test_processing.py     # ejecución sin interfaz
+├── data/processed/                # capturas tomadas por los botones
+├── build_portable.ps1             # construye una carpeta portátil en Windows
 └── requirements.txt
 ```
 
-La ventana selecciona las dos imágenes y entrega sus rutas a `ImageProcessor`.
-El script independiente hace la misma llamada sin importar PySide6. El procesador
-devuelve `ResultadoProcesado`, que contiene un `Resultado` con valores de texto,
-campos pendientes y avisos. No escribe archivos de resultados.
+La interfaz es HTML/CSS/JS renderizada en una ventana nativa con `pywebview`.
+Los botones "Capturar imagen 1" y "Capturar imagen 2" llaman a `Api.capturar`,
+que usa `processing/screen_capture.py` para: ocultar la ventana de la app,
+esperar 3 segundos a que el programa externo (ELECAV, un visor de imágenes,
+etc.) quede en primer plano, capturar el monitor donde está esa ventana y
+restaurar la app siempre, incluso si falla la captura. No busca ninguna
+ventana por título: captura lo que haya quedado al frente tras ocultarse.
+
+Tras cada captura, `Api.capturar` también detecta la rejilla de la tabla y
+cuenta sus filas con `ImageProcessor.detectar_tabla` (sin leer los valores
+todavía). "Confirmar y transcribir" llama a `Api.procesar(fila)`, que valida
+que ambas capturas tengan la misma cantidad de filas y ejecuta el OCR de los
+7 campos requeridos solo sobre la fila elegida ("Última fila" por defecto, o
+una fila específica) con `ImageProcessor.transcribir_fila`. El script
+independiente (`scripts/test_processing.py`) sigue usando `ImageProcessor.process`,
+que aplica la última fila de cada vista sin pasar por la interfaz. El
+procesador devuelve `ResultadoProcesado`, que contiene un `Resultado` con
+valores de texto, campos pendientes y avisos.
 
 ## Uso del operario (carpeta portátil)
 
 La carpeta `dist/LectorResultados` generada por `build_portable.ps1` contiene la
 aplicación, Tesseract y sus datos de idioma. Entregue **toda la carpeta** al
-operario. El operario abre `LectorResultados.exe` y elige sus dos capturas; no
-instala Python ni Tesseract. Se mantiene una consola abierta para mostrar el JSON.
+operario. El operario abre `LectorResultados.exe` con el reporte (ELECAV u
+otro visor) ya abierto y maximizado detrás, pulsa "Capturar imagen 1" (la app
+se oculta 3 segundos y captura lo que quedó al frente), luego "Capturar
+imagen 2" con la segunda parte del reporte visible, elige la fila a
+transcribir (por defecto la última) y por último "Confirmar y transcribir".
+El resultado se muestra en la propia ventana y puede exportarse a CSV con el
+botón "Descargar CSV". No instala Python ni Tesseract.
 
 Esta carpeta se construye y se verifica en Windows antes de distribuirla. El
 archivo ZIP del código fuente aún no es el ejecutable para el operario.
@@ -70,25 +91,25 @@ python scripts/test_processing.py --image1 ruta/captura1.png --image2 ruta/captu
 El resultado se imprime como JSON en consola. Una incompatibilidad o una lectura
 incierta produce un error y el script termina con código 1.
 
-## Alcance de esta primera versión
+## Alcance de esta versión
 
-Use dos capturas directas, completas y legibles de la **misma tabla**, tomadas
-antes y después del desplazamiento horizontal, sin modificar el orden ni el
-número de filas. El detector busca una rejilla recta y un encabezado con
-`Módulo de Young`. Omite filas de estadísticas identificadas por su texto o
-sin identificador individual, y elige la última fila restante.
+Use dos capturas directas, completas y legibles de la **misma tabla**, una con
+las columnas de condiciones del ensayo (encabezado con `Fecha`/`Hora`) y otra
+con las columnas de resultados mecánicos (encabezado con `fluencia`/`rotura`).
+El detector busca una rejilla recta; omite encabezado y pies de tabla del
+conteo de filas.
 
-La comparación exige que el número de filas coincida. Cada fila debe compartir
-el número `No`, o tener un valor único de `Módulo de Young` que coincida en ambas
-vistas; el módulo debe coincidir siempre. Si las condiciones no se cumplen, no
-se emite registro. Los campos cuyo OCR no supera el umbral se entregan como
-`null`; los encabezados no identificables se dejan como aviso. El OCR no corrige
-ni completa mediciones.
+La selección de fila es **por posición**, no por identificador de ensayo: la
+fila 1 es el primer registro de datos debajo del encabezado en cada captura,
+y así sucesivamente. La app no valida que ambas capturas correspondan al
+mismo registro ni usa `Módulo de Young` ni el número `No` para emparejarlas:
+es responsabilidad de quien captura asegurarse de que ambas vistas muestren
+los mismos registros y en el mismo orden. Si las dos capturas detectan una
+cantidad distinta de filas, la app bloquea la transcripción y pide repetir
+una captura.
 
-Las dos imágenes usadas como referencia en la solicitud **no corresponden al
-mismo resultado**: la segunda es una fotografía con perspectiva y números de fila
-distintos. Se deben tomar dos capturas nuevas del mismo ensayo para probar una
-unión real. La perspectiva de fotografías y encabezados muy borrosos están fuera
-del alcance del detector inicial. Además, la columna a la derecha de `Esfuerzo
-en límite elástico` en la foto no tiene título suficientemente legible, por lo
-que queda pendiente de revisión y no recibe nombre inventado.
+Solo se transcriben los 7 campos requeridos (esfuerzo máximo, esfuerzo en
+fluencia, carga máxima, longitud y diámetro de probeta, temperatura y
+humedad) de la fila elegida. Los campos cuyo OCR no supera el umbral se
+entregan como `null`; no se inventan valores ni se reintenta con otra fila.
+El OCR no corrige ni completa mediciones.

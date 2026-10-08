@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Lector de resultados de ensayos</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="shell__header">
+      <h1>Lector de resultados de ensayos</h1>
+      <p>
+        Capture las dos partes del reporte (ELECAV u otro visor) maximizado en pantalla.
+        Al pulsar "Capturar" la app se oculta 3 segundos para que la ventana que está
+        detrás quede en primer plano, y luego toma la captura de ese monitor.
+      </p>
+    </header>
+
+    <section class="card" id="card-1">
+      <div class="card__top">
+        <div>
+          <span class="step">1.1</span>
+          <h2>Capturar imagen 1</h2>
+          <p>Primera parte del reporte (condiciones del ensayo).</p>
+        </div>
+        <span class="badge badge--pending" data-badge="1">Incompleto</span>
+      </div>
+      <div class="card__body">
+        <img class="preview" data-preview="1" hidden />
+        <button class="btn btn--primary" data-capture="1">Capturar imagen 1</button>
+        <p class="detect-msg" data-detect="1"></p>
+      </div>
+    </section>
+
+    <section class="card" id="card-2">
+      <div class="card__top">
+        <div>
+          <span class="step">1.2</span>
+          <h2>Capturar imagen 2</h2>
+          <p>Segunda parte del reporte (resultados mecánicos).</p>
+        </div>
+        <span class="badge badge--pending" data-badge="2">Incompleto</span>
+      </div>
+      <div class="card__body">
+        <img class="preview" data-preview="2" hidden />
+        <button class="btn btn--primary" data-capture="2">Capturar imagen 2</button>
+        <p class="detect-msg" data-detect="2"></p>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card__top">
+        <div>
+          <span class="step">2</span>
+          <h2>Selección de fila</h2>
+          <p>Elija qué fila transcribir en ambas capturas.</p>
+        </div>
+        <span class="badge badge--pending" data-badge="process">Esperando capturas</span>
+      </div>
+      <div class="card__body">
+        <p class="hint">Capture los mismos registros y en el mismo orden en ambas vistas.</p>
+
+        <label class="radio-row">
+          <input type="radio" name="modo-fila" value="ultima" checked disabled id="modo-ultima" />
+          Última fila
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="modo-fila" value="elegir" disabled id="modo-elegir" />
+          Elegir fila
+          <select id="select-fila" disabled></select>
+        </label>
+
+        <p class="warning" id="mismatch-warning" hidden></p>
+
+        <button class="btn btn--success" id="btn-procesar" disabled>Confirmar y transcribir</button>
+      </div>
+    </section>
+
+    <section class="card" id="result-card" hidden>
+      <div class="card__top">
+        <div>
+          <span class="step">3</span>
+          <h2>Resultado</h2>
+          <p>Datos transcritos de las dos capturas.</p>
+        </div>
+        <button class="btn btn--outline" id="btn-exportar" disabled>Descargar CSV</button>
+      </div>
+      <div class="card__body">
+        <table class="result-table" id="result-table"></table>
+        <ul class="warnings" id="warnings"></ul>
+      </div>
+    </section>
+
+    <p class="status" id="status"></p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

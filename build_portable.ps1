@@ -23,7 +23,8 @@ $argsPy = @(
     "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--console",
     "--name", "LectorResultados", "--paths", ".",
     "--add-binary", "${ocrExe}:tesseract",
-    "--add-data", "$(Join-Path $TesseractDir 'tessdata'):tesseract/tessdata"
+    "--add-data", "$(Join-Path $TesseractDir 'tessdata'):tesseract/tessdata",
+    "--add-data", "$(Join-Path $PSScriptRoot 'ui\web'):ui/web"
 )
 Get-ChildItem $TesseractDir -Filter "*.dll" -File | ForEach-Object {
     $argsPy += @("--add-binary", "$($_.FullName):tesseract")

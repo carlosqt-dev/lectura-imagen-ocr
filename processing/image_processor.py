@@ -41,10 +41,14 @@ CAMPOS_LECTURA = set(CAMPOS_REQUERIDOS)
 
 
 @dataclass
-class _View:
+class TablaDetectada:
+    """Rejilla localizada en una captura: tipo de vista y límites de cada fila/columna."""
+
     tipo: str
-    rows: list[dict[str, str | None]]
-    warnings: list[str]
+    columnas: tuple[str, ...]
+    xs: list[int]
+    ys: list[int]
+    num_filas: int
 
 
 def _centros(indices: np.ndarray) -> list[int]:
@@ -71,39 +75,15 @@ class ImageProcessor:
             pytesseract.pytesseract.tesseract_cmd = str(installed)
 
     def process(self, image1: str | Path, image2: str | Path) -> ResultadoProcesado:
-        try:
-            pytesseract.get_tesseract_version()
-        except Exception as exc:
-            raise ProcessingError("No se pudo ejecutar Tesseract. Verifique su instalación.") from exc
-        primera, segunda = self._read(image1), self._read(image2)
-        if primera.tipo == segunda.tipo:
-            raise ProcessingError("Se necesitan dos vistas distintas: condiciones y resultados mecánicos.")
-        datos, resultados = (primera, segunda) if primera.tipo == "datos" else (segunda, primera)
-        # Modo provisional: toma la última fila de cada vista sin
-        # comprobar que ambas correspondan al mismo registro.
-        seleccionada = datos.rows[-1]
-        mecanicos = resultados.rows[-1]
-        campos = {
-            nombre: seleccionada.get(nombre) if nombre in seleccionada else mecanicos.get(nombre)
-            for nombre in CAMPOS_REQUERIDOS
-        }
-        pendientes = [k for k, v in campos.items() if v is None]
-        avisos = datos.warnings + resultados.warnings + [
-            "Validación de correspondencia desactivada temporalmente: "
-            "se tomó la última fila de cada captura. Los datos pueden "
-            "pertenecer a registros diferentes."
-        ]
-        return ResultadoProcesado(Resultado.desde_texto(campos), avisos, pendientes)
+        """Compatibilidad con el script de línea de comandos: usa la última fila de cada vista."""
+        tabla1 = self.detectar_tabla(image1)
+        tabla2 = self.detectar_tabla(image2)
+        return self.transcribir_fila(image1, tabla1, tabla1.num_filas, image2, tabla2, tabla2.num_filas)
 
-    def _read(self, path: str | Path) -> _View:
-        try:
-            contenido = np.fromfile(str(path), dtype=np.uint8)
-            image = cv2.imdecode(contenido, cv2.IMREAD_COLOR)
-        except Exception as exc:
-            raise ProcessingError(f"No se pudo abrir la imagen: {path}") from exc
-        if image is None:
-            raise ProcessingError(f"No se pudo abrir la imagen: {path}")
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    def detectar_tabla(self, path: str | Path) -> TablaDetectada:
+        """Localiza la rejilla y el tipo de vista de una captura, sin leer los valores de las filas."""
+        self._verificar_tesseract()
+        gray = self._cargar_gray(path)
         xs, ys, inicio, fin = self._rejilla(gray)
         texto = (self._ocr(gray[inicio + 2:fin - 2, xs[0] + 2:xs[-1] - 2], header=True) or "").lower()
         if "fecha" in texto or "hora" in texto:
@@ -112,18 +92,67 @@ class ImageProcessor:
             tipo, columnas = "resultados", VISTA_RESULTADOS
         else:
             raise ProcessingError(f"No se identificó la vista en {path}; incluya los encabezados completos.")
-        rows = []
-        for numero, (arriba, abajo) in enumerate(zip(ys, ys[1:]), start=1):
-            cells = {
-                nombre: self._ocr(gray[arriba + 3:abajo - 3, xs[j] + 3:xs[j + 1] - 3])
-                for j, nombre in enumerate(columnas) if nombre in CAMPOS_LECTURA
-            }
-            if not any(cells.values()):
-                raise ProcessingError(f"No se pudo leer la fila {numero} de {path}.")
-            rows.append(cells)
-        if not rows:
+        num_filas = len(ys) - 1
+        if num_filas < 1:
             raise ProcessingError(f"No se encontraron filas en {path}.")
-        return _View(tipo, rows, [])
+        return TablaDetectada(tipo=tipo, columnas=columnas, xs=xs, ys=ys, num_filas=num_filas)
+
+    def leer_fila(self, path: str | Path, tabla: TablaDetectada, fila: int) -> dict[str, str | None]:
+        """Ejecuta el OCR de los campos requeridos únicamente sobre la fila indicada (1-based)."""
+        if not 1 <= fila <= tabla.num_filas:
+            raise ProcessingError(f"La fila {fila} no existe en {path} (hay {tabla.num_filas} fila(s)).")
+        gray = self._cargar_gray(path)
+        arriba, abajo = tabla.ys[fila - 1], tabla.ys[fila]
+        cells = {
+            nombre: self._ocr(gray[arriba + 3:abajo - 3, tabla.xs[j] + 3:tabla.xs[j + 1] - 3])
+            for j, nombre in enumerate(tabla.columnas) if nombre in CAMPOS_LECTURA
+        }
+        if not any(cells.values()):
+            raise ProcessingError(f"No se pudo leer la fila {fila} de {path}.")
+        return cells
+
+    def transcribir_fila(
+        self,
+        image1: str | Path, tabla1: TablaDetectada, fila1: int,
+        image2: str | Path, tabla2: TablaDetectada, fila2: int,
+    ) -> ResultadoProcesado:
+        if tabla1.tipo == tabla2.tipo:
+            raise ProcessingError("Se necesitan dos vistas distintas: condiciones y resultados mecánicos.")
+        if tabla1.tipo == "datos":
+            datos_path, datos_tabla, datos_fila = image1, tabla1, fila1
+            resultados_path, resultados_tabla, resultados_fila = image2, tabla2, fila2
+        else:
+            datos_path, datos_tabla, datos_fila = image2, tabla2, fila2
+            resultados_path, resultados_tabla, resultados_fila = image1, tabla1, fila1
+        datos_celdas = self.leer_fila(datos_path, datos_tabla, datos_fila)
+        resultados_celdas = self.leer_fila(resultados_path, resultados_tabla, resultados_fila)
+        campos = {
+            nombre: datos_celdas.get(nombre) if nombre in datos_celdas else resultados_celdas.get(nombre)
+            for nombre in CAMPOS_REQUERIDOS
+        }
+        pendientes = [k for k, v in campos.items() if v is None]
+        avisos = [
+            "Selección por posición: se transcribió la fila indicada de cada captura, no un "
+            "identificador de ensayo. Verifique que ambas capturas correspondan al mismo "
+            "registro y estén en el mismo orden."
+        ]
+        return ResultadoProcesado(Resultado.desde_texto(campos), avisos, pendientes)
+
+    def _verificar_tesseract(self) -> None:
+        try:
+            pytesseract.get_tesseract_version()
+        except Exception as exc:
+            raise ProcessingError("No se pudo ejecutar Tesseract. Verifique su instalación.") from exc
+
+    def _cargar_gray(self, path: str | Path) -> np.ndarray:
+        try:
+            contenido = np.fromfile(str(path), dtype=np.uint8)
+            image = cv2.imdecode(contenido, cv2.IMREAD_COLOR)
+        except Exception as exc:
+            raise ProcessingError(f"No se pudo abrir la imagen: {path}") from exc
+        if image is None:
+            raise ProcessingError(f"No se pudo abrir la imagen: {path}")
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     def _rejilla(self, gray: np.ndarray):
         _, ancho = gray.shape

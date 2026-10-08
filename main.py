@@ -1,15 +1,25 @@
 import sys
-from PySide6.QtWidgets import QApplication
+from pathlib import Path
 
-from ui.window import MainWindow
+import webview
+
+from ui.api import Api
 
 
 def main():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    return app.exec()
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    api = Api()
+    window = webview.create_window(
+        "Lector de resultados de ensayos",
+        str(base_dir / "ui" / "web" / "index.html"),
+        js_api=api,
+        width=720,
+        height=820,
+        min_size=(560, 600),
+    )
+    api.set_window(window)
+    webview.start()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
