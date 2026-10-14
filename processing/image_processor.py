@@ -17,9 +17,9 @@ class ProcessingError(Exception):
 
 
 CAMPOS_REQUERIDOS = (
-    "Esfuerzo máximo (MPa)", "Esfuerzo en fluencia (MPa)",
-    "Carga máxima (kN)", "Longitud probeta (mm)",
-    "Diámetro probeta (mm)", "Temperatura (°C)", "Humedad",
+    "Humedad", "Temperatura (°C)",
+    "Longitud probeta (mm)", "Diámetro probeta (mm)",
+    "Carga máxima (kN)", "Esfuerzo máximo (MPa)", "Esfuerzo en fluencia (MPa)",
 )
 VISTA_DATOS = (
     "No", "Fecha", "Hora", "Validez", "Analista", "Orden trabajo",
@@ -38,6 +38,12 @@ VISTA_RESULTADOS = (
 )
 COLUMNAS = CAMPOS_REQUERIDOS
 CAMPOS_LECTURA = set(CAMPOS_REQUERIDOS)
+
+# Algunas líneas de la rejilla (p. ej. el borde entre "No" y "Fecha" en la
+# vista de datos) se renderizan en un gris más claro que el resto (~140)
+# y no llegan al blanco casi puro (~180-250) de las demás. Un umbral de 155
+# las pierde por completo y corre todas las columnas siguientes.
+UMBRAL_LINEA = 120
 
 
 @dataclass
@@ -156,7 +162,7 @@ class ImageProcessor:
 
     def _rejilla(self, gray: np.ndarray):
         _, ancho = gray.shape
-        cobertura_y = np.count_nonzero(gray > 155, axis=1)
+        cobertura_y = np.count_nonzero(gray > UMBRAL_LINEA, axis=1)
         lineas = _centros(np.flatnonzero(cobertura_y >= ancho * 0.80))
         if len(lineas) < 4:
             raise ProcessingError("No se detectaron las líneas horizontales de la tabla.")
@@ -178,7 +184,7 @@ class ImageProcessor:
         if not anteriores:
             raise ProcessingError("No se detectó el inicio del encabezado.")
         region = gray[mejor[0] + 3:mejor[-1] - 3, :]
-        cobertura_x = np.count_nonzero(region > 155, axis=0)
+        cobertura_x = np.count_nonzero(region > UMBRAL_LINEA, axis=0)
         xs = _centros(np.flatnonzero(cobertura_x >= region.shape[0] * 0.85))
 
         # Corrección: excluye franjas externas estrechas, como la barra
@@ -193,6 +199,7 @@ class ImageProcessor:
                 f"Se detectaron {max(0, len(xs) - 1)} columnas. "
                 "Se esperan las 17 columnas de ELECAV con sus bordes visibles."
             )
+        self._validar_anchos_columnas(xs)
         # Una franja vacía bajo la tabla puede tener la misma altura
         # que las filas. Se excluye solo si perdió las divisiones
         # verticales internas, no porque el OCR haya fallado.
@@ -207,6 +214,26 @@ class ImageProcessor:
             mejor.pop()
 
         return xs, mejor, anteriores[-1], mejor[0]
+
+    def _validar_anchos_columnas(self, xs: list[int]) -> None:
+        """Detecta si se perdió o sobró una línea vertical, que corre todas las
+        columnas siguientes y hace leer el valor de la columna vecina sin avisar."""
+        anchos = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
+        normal = float(np.median(anchos[1:]))
+        if normal <= 0:
+            raise ProcessingError("No se pudo medir el ancho de las columnas.")
+        if anchos[0] >= normal * 0.9:
+            raise ProcessingError(
+                "No se detectó el borde entre la columna 'No' y la siguiente; "
+                "las columnas quedarían corridas. Repita la captura."
+            )
+        for posicion, ancho in enumerate(anchos[1:], start=2):
+            if not 0.7 * normal <= ancho <= 1.3 * normal:
+                raise ProcessingError(
+                    f"La columna {posicion} no se alineó correctamente (ancho {ancho}px, "
+                    f"se esperaba ~{normal:.0f}px); las columnas quedarían corridas. "
+                    "Repita la captura."
+                )
 
     def _ocr(self, crop: np.ndarray, header: bool = False) -> str | None:
         if crop.size == 0:
