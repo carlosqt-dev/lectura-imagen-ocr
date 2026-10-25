@@ -13,15 +13,18 @@ function setBusy(ocupado) {
   if (ocupado) {
     procesarBtn.disabled = true;
     exportarBtn.disabled = true;
+    exportarXlsmBtn.disabled = true;
   } else {
     actualizarSeleccionFila();
     exportarBtn.disabled = resultCard.hidden;
+    exportarXlsmBtn.disabled = resultCard.hidden;
   }
 }
 
 const statusEl = document.getElementById("status");
 const procesarBtn = document.getElementById("btn-procesar");
 const exportarBtn = document.getElementById("btn-exportar");
+const exportarXlsmBtn = document.getElementById("btn-exportar-xlsm");
 const resultCard = document.getElementById("result-card");
 const modoUltima = document.getElementById("modo-ultima");
 const modoElegir = document.getElementById("modo-elegir");
@@ -50,6 +53,7 @@ function setDetectMsg(indice, texto, variante) {
 function invalidarResultado() {
   resultCard.hidden = true;
   exportarBtn.disabled = true;
+  exportarXlsmBtn.disabled = true;
   window.pywebview.api.invalidar_resultado();
 }
 
@@ -156,6 +160,7 @@ function renderResultado(resultado) {
 
   resultCard.hidden = false;
   exportarBtn.disabled = false;
+  exportarXlsmBtn.disabled = false;
 }
 
 async function procesar() {
@@ -194,6 +199,18 @@ async function exportar() {
   setStatus(`Archivo guardado en ${respuesta.path}`);
 }
 
+async function exportarXlsm() {
+  if (state.ocupado || exportarXlsmBtn.disabled) return;
+  setBusy(true);
+  const respuesta = await window.pywebview.api.exportar_xlsm();
+  setBusy(false);
+  if (!respuesta.ok) {
+    setStatus(respuesta.error, true);
+    return;
+  }
+  setStatus(`Archivo guardado en ${respuesta.path}`);
+}
+
 document.querySelectorAll("[data-capture]").forEach((btn) => {
   btn.addEventListener("click", () => capturar(Number(btn.dataset.capture)));
 });
@@ -223,5 +240,6 @@ selectFila.addEventListener("change", () => {
 
 procesarBtn.addEventListener("click", procesar);
 exportarBtn.addEventListener("click", exportar);
+exportarXlsmBtn.addEventListener("click", exportarXlsm);
 
 actualizarSeleccionFila();

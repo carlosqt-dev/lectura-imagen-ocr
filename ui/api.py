@@ -14,8 +14,13 @@ from processing import (
     TablaDetectada,
     capture_elecav_window,
 )
+from processor_file import ExcelWriteError, escribir_resultado
 
 CAPTURAS_DIR = Path(__file__).resolve().parents[1] / "data" / "processed"
+PLANTILLA_XLSX = Path(__file__).resolve().parents[1] / (
+    "F-LA-08-01 INFORME DE RESULTADOS TRACCIÓN PARA PROBETAS ESTANDAR "
+    "(Datos diligenciados).xlsx"
+)
 
 
 def _preview_data_uri(path: Path) -> str:
@@ -127,4 +132,23 @@ class Api:
             escritor.writerow(["Campo", "Valor"])
             for clave, valor in datos.items():
                 escritor.writerow([clave, valor if valor is not None else ""])
+        return {"ok": True, "path": str(ruta)}
+
+    def exportar_xlsm(self) -> dict:
+        if self._last_result is None:
+            return {"ok": False, "error": "Primero transcriba una captura."}
+        if self._window is None:
+            return {"ok": False, "error": "Ventana no disponible."}
+        if not PLANTILLA_XLSX.is_file():
+            return {"ok": False, "error": f"No se encontró la plantilla: {PLANTILLA_XLSX.name}"}
+        destino = self._window.create_file_dialog(
+            webview.SAVE_DIALOG, directory=str(Path.home()), save_filename=PLANTILLA_XLSX.name
+        )
+        if not destino:
+            return {"ok": False, "error": "Exportación cancelada."}
+        ruta = Path(destino if isinstance(destino, str) else destino[0])
+        try:
+            escribir_resultado(self._last_result, PLANTILLA_XLSX, ruta)
+        except ExcelWriteError as exc:
+            return {"ok": False, "error": str(exc)}
         return {"ok": True, "path": str(ruta)}
