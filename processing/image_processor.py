@@ -45,6 +45,14 @@ CAMPOS_LECTURA = set(CAMPOS_REQUERIDOS)
 # las pierde por completo y corre todas las columnas siguientes.
 UMBRAL_LINEA = 120
 
+# Separa el trazo (dígitos claros, ~200-255) del fondo de una celda de datos
+# (~60-115, con o sin tinte de color en filas resaltadas) para recortar al
+# contenido real antes del OCR. Celdas con 1-2 dígitos (p. ej. "Humedad")
+# dejan demasiado margen vacío alrededor del glifo si no se recortan, lo que
+# hace que Tesseract pierda o invente dígitos de forma errática.
+UMBRAL_CONTENIDO = 150
+MARGEN_CONTENIDO = 10
+
 
 @dataclass
 class TablaDetectada:
@@ -238,6 +246,10 @@ class ImageProcessor:
     def _ocr(self, crop: np.ndarray, header: bool = False) -> str | None:
         if crop.size == 0:
             return None
+        if not header:
+            crop = self._recortar_contenido(crop)
+            if crop is None:
+                return None
         large = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         if np.median(large) < 130:
             large = cv2.bitwise_not(large)
@@ -250,3 +262,16 @@ class ImageProcessor:
             return texto
         texto = re.sub(r"\s+", "", texto)
         return texto if re.fullmatch(r"-?\d+(?:[,.]\d+)?", texto) else None
+
+    def _recortar_contenido(self, crop: np.ndarray) -> np.ndarray | None:
+        """Recorta la celda al rectángulo real del dígito/símbolo, con un
+        margen fijo, en vez de pasarle a Tesseract la celda completa con
+        espacio vacío desproporcionado cuando el valor es corto."""
+        puntos = cv2.findNonZero((crop > UMBRAL_CONTENIDO).astype(np.uint8))
+        if puntos is None:
+            return None
+        x, y, w, h = cv2.boundingRect(puntos)
+        alto, ancho = crop.shape
+        y0, y1 = max(0, y - MARGEN_CONTENIDO), min(alto, y + h + MARGEN_CONTENIDO)
+        x0, x1 = max(0, x - MARGEN_CONTENIDO), min(ancho, x + w + MARGEN_CONTENIDO)
+        return crop[y0:y1, x0:x1]
