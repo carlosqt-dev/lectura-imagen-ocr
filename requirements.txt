@@ -2,4 +2,5 @@ opencv-python>=4.8,<5
 pytesseract>=0.3.10,<1
 pywebview>=5,<6
 pillow>=10,<11
+openpyxl>=3.1,<4
 pywin32>=306; sys_platform == "win32"

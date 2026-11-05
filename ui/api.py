@@ -17,9 +17,9 @@ from processing import (
 from processor_file import ExcelWriteError, escribir_resultado
 
 CAPTURAS_DIR = Path(__file__).resolve().parents[1] / "data" / "processed"
-PLANTILLA_XLSX = Path(__file__).resolve().parents[1] / (
+PLANTILLA_XLSM = Path(__file__).resolve().parents[1] / (
     "F-LA-08-01 INFORME DE RESULTADOS TRACCIÓN PARA PROBETAS ESTANDAR "
-    "(Datos diligenciados).xlsx"
+    "(Datos diligenciados).xlsm"
 )
 
 
@@ -139,16 +139,16 @@ class Api:
             return {"ok": False, "error": "Primero transcriba una captura."}
         if self._window is None:
             return {"ok": False, "error": "Ventana no disponible."}
-        if not PLANTILLA_XLSX.is_file():
-            return {"ok": False, "error": f"No se encontró la plantilla: {PLANTILLA_XLSX.name}"}
+        if not PLANTILLA_XLSM.is_file():
+            return {"ok": False, "error": f"No se encontró la plantilla: {PLANTILLA_XLSM.name}"}
         destino = self._window.create_file_dialog(
-            webview.SAVE_DIALOG, directory=str(Path.home()), save_filename=PLANTILLA_XLSX.name
+            webview.SAVE_DIALOG, directory=str(Path.home()), save_filename=PLANTILLA_XLSM.name
         )
         if not destino:
             return {"ok": False, "error": "Exportación cancelada."}
         ruta = Path(destino if isinstance(destino, str) else destino[0])
         try:
-            escribir_resultado(self._last_result, PLANTILLA_XLSX, ruta)
+            escribir_resultado(self._last_result, PLANTILLA_XLSM, ruta)
         except ExcelWriteError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "path": str(ruta)}
