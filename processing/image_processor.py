@@ -51,7 +51,10 @@ UMBRAL_LINEA = 120
 # dejan demasiado margen vacío alrededor del glifo si no se recortan, lo que
 # hace que Tesseract pierda o invente dígitos de forma errática.
 UMBRAL_CONTENIDO = 150
-MARGEN_CONTENIDO = 10
+# Fracción de la altura del propio dígito detectado, no un número de píxeles
+# fijo: el alto del glifo ya escala solo con el tamaño de fuente que resulte
+# de la resolución/escalado de pantalla, así que el margen lo sigue.
+MARGEN_CONTENIDO_FRAC = 0.6
 
 
 @dataclass
@@ -63,6 +66,7 @@ class TablaDetectada:
     xs: list[int]
     ys: list[int]
     num_filas: int
+    borde: int
 
 
 def _centros(indices: np.ndarray) -> list[int]:
@@ -98,8 +102,8 @@ class ImageProcessor:
         """Localiza la rejilla y el tipo de vista de una captura, sin leer los valores de las filas."""
         self._verificar_tesseract()
         gray = self._cargar_gray(path)
-        xs, ys, inicio, fin = self._rejilla(gray)
-        texto = (self._ocr(gray[inicio + 2:fin - 2, xs[0] + 2:xs[-1] - 2], header=True) or "").lower()
+        xs, ys, inicio, fin, borde = self._rejilla(gray)
+        texto = (self._ocr(gray[inicio + borde:fin - borde, xs[0] + borde:xs[-1] - borde], header=True) or "").lower()
         if "fecha" in texto or "hora" in texto:
             tipo, columnas = "datos", VISTA_DATOS
         elif "fluencia" in texto or "rotura" in texto:
@@ -109,7 +113,7 @@ class ImageProcessor:
         num_filas = len(ys) - 1
         if num_filas < 1:
             raise ProcessingError(f"No se encontraron filas en {path}.")
-        return TablaDetectada(tipo=tipo, columnas=columnas, xs=xs, ys=ys, num_filas=num_filas)
+        return TablaDetectada(tipo=tipo, columnas=columnas, xs=xs, ys=ys, num_filas=num_filas, borde=borde)
 
     def leer_fila(self, path: str | Path, tabla: TablaDetectada, fila: int) -> dict[str, str | None]:
         """Ejecuta el OCR de los campos requeridos únicamente sobre la fila indicada (1-based)."""
@@ -117,8 +121,9 @@ class ImageProcessor:
             raise ProcessingError(f"La fila {fila} no existe en {path} (hay {tabla.num_filas} fila(s)).")
         gray = self._cargar_gray(path)
         arriba, abajo = tabla.ys[fila - 1], tabla.ys[fila]
+        borde = tabla.borde
         cells = {
-            nombre: self._ocr(gray[arriba + 3:abajo - 3, tabla.xs[j] + 3:tabla.xs[j + 1] - 3])
+            nombre: self._ocr(gray[arriba + borde:abajo - borde, tabla.xs[j] + borde:tabla.xs[j + 1] - borde])
             for j, nombre in enumerate(tabla.columnas) if nombre in CAMPOS_LECTURA
         }
         if not any(cells.values()):
@@ -174,14 +179,22 @@ class ImageProcessor:
         lineas = _centros(np.flatnonzero(cobertura_y >= ancho * 0.80))
         if len(lineas) < 4:
             raise ProcessingError("No se detectaron las líneas horizontales de la tabla.")
+        # La altura de fila no se asume en píxeles fijos (eso solo vale para
+        # una resolución/escalado de Windows concretos): se autocalibra con
+        # la mediana de los huecos entre líneas de ESTA captura. Como la
+        # mayoría de los huecos son entre filas (y solo 1-2 son "raros":
+        # encabezado, banda vacía), la mediana cae sola sobre la altura real.
+        gaps = np.diff(lineas)
+        altura_tipica = float(np.median(gaps))
+        TOLERANCIA_ALTURA = 0.15
         mejor = []
         for inicio in range(len(lineas) - 1):
             altura = lineas[inicio + 1] - lineas[inicio]
-            if not 18 <= altura <= 65:
+            if abs(altura - altura_tipica) > altura_tipica * TOLERANCIA_ALTURA:
                 continue
             secuencia = [lineas[inicio], lineas[inicio + 1]]
             for j in range(inicio + 1, len(lineas) - 1):
-                if abs(lineas[j + 1] - lineas[j] - altura) > 4:
+                if abs(lineas[j + 1] - lineas[j] - altura) > altura_tipica * TOLERANCIA_ALTURA:
                     break
                 secuencia.append(lineas[j + 1])
             if len(secuencia) > len(mejor):
@@ -191,16 +204,34 @@ class ImageProcessor:
         anteriores = [y for y in lineas if y < mejor[0]]
         if not anteriores:
             raise ProcessingError("No se detectó el inicio del encabezado.")
-        region = gray[mejor[0] + 3:mejor[-1] - 3, :]
+        # Recorte para no comerse el trazo de la línea de rejilla: proporcional
+        # al tamaño de fila/columna detectado en esta captura, no un número de
+        # píxeles fijo (el trazo se renderiza más grueso a mayor resolución).
+        BORDE_FRAC = 0.06
+        borde = max(1, round(altura_tipica * BORDE_FRAC))
+        region = gray[mejor[0] + borde:mejor[-1] - borde, :]
         cobertura_x = np.count_nonzero(region > UMBRAL_LINEA, axis=0)
         xs = _centros(np.flatnonzero(cobertura_x >= region.shape[0] * 0.85))
 
-        # Corrección: excluye franjas externas estrechas, como la barra
-        # de desplazamiento, si se detectan columnas adicionales.
-        while len(xs) > 18 and xs[-1] - xs[-2] < 20:
-            xs.pop()
-        while len(xs) > 18 and xs[1] - xs[0] < 20:
-            xs.pop(0)
+        # Corrección: excluye franjas externas estrechas, como el borde de la
+        # ventana que queda dentro del screenshot completo, si se detectan
+        # columnas adicionales. El umbral es proporcional al ancho de columna
+        # ya detectado (excluyendo los extremos que se están evaluando), no
+        # un número de píxeles fijo: una franja real de borde siempre es una
+        # fracción chica del ancho de columna normal, sea cual sea la
+        # resolución/escalado de pantalla; una columna real nunca baja de
+        # 0.7×normal (ver _validar_anchos_columnas), así que hay margen de
+        # sobra entre ambos casos.
+        FRANJA_FRAC = 0.4
+        while len(xs) > 18:
+            anchos_actuales = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
+            normal_actual = float(np.median(anchos_actuales[1:-1] or anchos_actuales))
+            if xs[-1] - xs[-2] < normal_actual * FRANJA_FRAC:
+                xs.pop()
+            elif xs[1] - xs[0] < normal_actual * FRANJA_FRAC:
+                xs.pop(0)
+            else:
+                break
 
         if len(xs) != 18:
             raise ProcessingError(
@@ -213,7 +244,7 @@ class ImageProcessor:
         # verticales internas, no porque el OCR haya fallado.
         while len(mejor) > 2:
             arriba, abajo = mejor[-2:]
-            divisiones = gray[arriba + 3:abajo - 3, xs[1:-1]]
+            divisiones = gray[arriba + borde:abajo - borde, xs[1:-1]]
             if divisiones.size == 0:
                 raise ProcessingError("La última banda de la rejilla es inválida.")
             soporte = np.mean(divisiones > 155, axis=0)
@@ -221,7 +252,7 @@ class ImageProcessor:
                 break
             mejor.pop()
 
-        return xs, mejor, anteriores[-1], mejor[0]
+        return xs, mejor, anteriores[-1], mejor[0], borde
 
     def _validar_anchos_columnas(self, xs: list[int]) -> None:
         """Detecta si se perdió o sobró una línea vertical, que corre todas las
@@ -265,13 +296,15 @@ class ImageProcessor:
 
     def _recortar_contenido(self, crop: np.ndarray) -> np.ndarray | None:
         """Recorta la celda al rectángulo real del dígito/símbolo, con un
-        margen fijo, en vez de pasarle a Tesseract la celda completa con
-        espacio vacío desproporcionado cuando el valor es corto."""
+        margen proporcional a su propio alto, en vez de pasarle a Tesseract
+        la celda completa con espacio vacío desproporcionado cuando el
+        valor es corto."""
         puntos = cv2.findNonZero((crop > UMBRAL_CONTENIDO).astype(np.uint8))
         if puntos is None:
             return None
         x, y, w, h = cv2.boundingRect(puntos)
         alto, ancho = crop.shape
-        y0, y1 = max(0, y - MARGEN_CONTENIDO), min(alto, y + h + MARGEN_CONTENIDO)
-        x0, x1 = max(0, x - MARGEN_CONTENIDO), min(ancho, x + w + MARGEN_CONTENIDO)
+        margen = max(2, round(h * MARGEN_CONTENIDO_FRAC))
+        y0, y1 = max(0, y - margen), min(alto, y + h + margen)
+        x0, x1 = max(0, x - margen), min(ancho, x + w + margen)
         return crop[y0:y1, x0:x1]
