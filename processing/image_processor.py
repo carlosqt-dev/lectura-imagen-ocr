@@ -56,6 +56,14 @@ UMBRAL_CONTENIDO = 150
 # de la resolución/escalado de pantalla, así que el margen lo sigue.
 MARGEN_CONTENIDO_FRAC = 0.6
 
+# Alto (px) al que se lleva el dígito antes de pasarlo a Tesseract, en vez de
+# un factor de ampliación fijo: los dígitos de ELECAV miden ~15 px en una
+# captura y ~19 px en otra según la pantalla, y Tesseract lee mejor con
+# glifos de ~30 px. Con un factor fijo (antes 3x/5x) los dígitos quedaban de
+# 45-95 px y confundía "5" con "9". Validado contra 210 valores reales de 3
+# juegos de capturas: 24→208, 28→209, 32→210, 36→207, 40→196 aciertos.
+ALTO_DIGITO_OBJETIVO = 32
+
 
 @dataclass
 class TablaDetectada:
@@ -277,13 +285,22 @@ class ImageProcessor:
     def _ocr(self, crop: np.ndarray, header: bool = False) -> str | None:
         if crop.size == 0:
             return None
-        if not header:
-            crop = self._recortar_contenido(crop)
-            if crop is None:
+        if header:
+            escala = 3
+        else:
+            recorte = self._recortar_contenido(crop)
+            if recorte is None:
                 return None
-        large = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+            crop, alto_digito = recorte
+            escala = ALTO_DIGITO_OBJETIVO / alto_digito
+        interpolacion = cv2.INTER_AREA if escala < 1 else cv2.INTER_CUBIC
+        large = cv2.resize(crop, None, fx=escala, fy=escala, interpolation=interpolacion)
         if np.median(large) < 130:
             large = cv2.bitwise_not(large)
+        if not header:
+            # Blanco y negro puro: elimina los grises del antialiasing que
+            # hacían que el "5" se leyera como "9" (sin esto: 191/210).
+            _, large = cv2.threshold(large, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         large = cv2.copyMakeBorder(large, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
         config = "--psm 6" if header else "--psm 7 -c tessedit_char_whitelist=0123456789,.-"
         if self._tessdata_dir:
@@ -294,11 +311,11 @@ class ImageProcessor:
         texto = re.sub(r"\s+", "", texto)
         return texto if re.fullmatch(r"-?\d+(?:[,.]\d+)?", texto) else None
 
-    def _recortar_contenido(self, crop: np.ndarray) -> np.ndarray | None:
+    def _recortar_contenido(self, crop: np.ndarray) -> tuple[np.ndarray, int] | None:
         """Recorta la celda al rectángulo real del dígito/símbolo, con un
         margen proporcional a su propio alto, en vez de pasarle a Tesseract
         la celda completa con espacio vacío desproporcionado cuando el
-        valor es corto."""
+        valor es corto. Devuelve el recorte y el alto del contenido."""
         puntos = cv2.findNonZero((crop > UMBRAL_CONTENIDO).astype(np.uint8))
         if puntos is None:
             return None
@@ -307,4 +324,4 @@ class ImageProcessor:
         margen = max(2, round(h * MARGEN_CONTENIDO_FRAC))
         y0, y1 = max(0, y - margen), min(alto, y + h + margen)
         x0, x1 = max(0, x - margen), min(ancho, x + w + margen)
-        return crop[y0:y1, x0:x1]
+        return crop[y0:y1, x0:x1], h
