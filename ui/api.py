@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import sys
 from pathlib import Path
 
 import webview
@@ -16,8 +17,16 @@ from processing import (
 )
 from processor_file import ExcelWriteError, escribir_resultado
 
-CAPTURAS_DIR = Path(__file__).resolve().parents[1] / "data" / "processed"
-PLANTILLA_XLSM = Path(__file__).resolve().parents[1] / (
+if getattr(sys, "frozen", False):
+    # Ejecutable portátil: los recursos empaquetados viven en _internal
+    # (sys._MEIPASS), pero las capturas van junto al .exe, a la vista del
+    # operario y fuera de la carpeta interna del empaquetado.
+    _RECURSOS = Path(sys._MEIPASS)
+    CAPTURAS_DIR = Path(sys.executable).parent / "capturas"
+else:
+    _RECURSOS = Path(__file__).resolve().parents[1]
+    CAPTURAS_DIR = _RECURSOS / "data" / "processed"
+PLANTILLA_XLSM = _RECURSOS / (
     "F-LA-08-01 INFORME DE RESULTADOS TRACCIÓN PARA PROBETAS ESTANDAR "
     "(Datos diligenciados).xlsm"
 )
@@ -127,11 +136,14 @@ class Api:
             return {"ok": False, "error": "Exportación cancelada."}
         ruta = Path(destino if isinstance(destino, str) else destino[0])
         datos = self._last_result.resultado.como_dict()
-        with ruta.open("w", newline="", encoding="utf-8-sig") as archivo:
-            escritor = csv.writer(archivo)
-            escritor.writerow(["Campo", "Valor"])
-            for clave, valor in datos.items():
-                escritor.writerow([clave, valor if valor is not None else ""])
+        try:
+            with ruta.open("w", newline="", encoding="utf-8-sig") as archivo:
+                escritor = csv.writer(archivo)
+                escritor.writerow(["Campo", "Valor"])
+                for clave, valor in datos.items():
+                    escritor.writerow([clave, valor if valor is not None else ""])
+        except OSError as exc:
+            return {"ok": False, "error": f"No se pudo guardar {ruta.name} (¿está abierto en Excel?): {exc}"}
         return {"ok": True, "path": str(ruta)}
 
     def exportar_xlsm(self) -> dict:

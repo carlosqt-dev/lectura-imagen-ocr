@@ -71,10 +71,13 @@ class ResultadoProcesado:
     resultado: Resultado
     avisos: list[str] = field(default_factory=list)
     campos_pendientes: list[str] = field(default_factory=list)
+    # Problemas a revisar antes de usar los datos: {"campos": [...], "mensaje": str}.
+    alertas: list[dict] = field(default_factory=list)
 
     def como_dict(self) -> dict:
         return {
             "resultado": self.resultado.como_dict(),
             "campos_pendientes": self.campos_pendientes,
             "avisos": self.avisos,
+            "alertas": self.alertas,
         }
